@@ -45,7 +45,7 @@ class Encoder(nn.Module):
             print('nan error \n')
 
         # to amplify the value of A and accelerate convergence.
-        adj_A1 = torch.sinh(3.*self.adj_A)
+        adj_A1 = torch.tanh(3.*self.adj_A)
 
         # adj_Aforz = I-A^T
         adj_Aforz = preprocess_adj_new(adj_A1).float()
@@ -115,34 +115,32 @@ class GCNLayer(nn.Module):
         """
 
         # 如果需要正規化，可以加上 D^{-1/2} A D^{-1/2}
-        adj_norm = self.normalize_adj(adj)
         # GCN 聚合公式
-        out = torch.matmul(adj_norm, x)   # A * X
+        out = torch.matmul(adj, x)   # A * X
         out = self.linear(out)            # (AX)W
 
         return out
 
-    def normalize_adj(self, adj):
-        """對 A 做對稱正規化: D^{-1/2} A D^{-1/2}"""
-        rowsum = adj.sum(1) + 1e-8  # 避免除以 0
-        d_inv_sqrt = torch.pow(rowsum, -0.5).flatten()
-        d_mat_inv_sqrt = torch.diag(d_inv_sqrt)
-        return torch.mm(torch.mm(d_mat_inv_sqrt, adj), d_mat_inv_sqrt)
 
 class GCNEncoder(nn.Module):
-    def __init__(self, n_in, n_xdims, n_hid, n_out, adj_A, batch_size, do_prob=0., factor=True, tol=0.1):
+    def __init__(self, num_n, n_xdims, n_hid, n_out, adj_A, batch_size, do_prob=0., factor=True, tol=0.1):
         super(GCNEncoder, self).__init__()
         self.adj_A = nn.Parameter(Variable(torch.from_numpy(adj_A).double(), requires_grad=True))
         self.factor = factor
+        self.n_hid = n_hid
+        self.num_n = num_n
         self.n_xdims = n_xdims
+        self.batch_size = batch_size
         self.Wa = nn.Parameter(torch.zeros(n_out), requires_grad=True)
         self.fc1 = nn.Linear(n_xdims, n_hid, bias = True)
         self.fc2 = nn.Linear(n_hid, n_hid, bias = True)
         self.fc3 = nn.Linear(n_hid, n_hid, bias = True)
         self.fc4 = nn.Linear(n_hid, n_hid, bias = True)
 
-        self.gcn = GCNLayer(n_hid, n_hid)
-        self.batchnorm = nn.BatchNorm1d(n_in)
+        self.gcn1 = GCNLayer(n_hid, n_hid)
+        self.gcn2 = GCNLayer(n_hid, n_hid)
+        self.batchnorm1 = nn.BatchNorm1d(n_hid)
+        self.batchnorm2 = nn.BatchNorm1d(n_hid)
 
         self.dropout_prob = do_prob
         self.batch_size = batch_size
@@ -161,33 +159,49 @@ class GCNEncoder(nn.Module):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
 
+    def normalize_adj(self, adj):
+        """對 A 做對稱正規化: D^{-1/2} A D^{-1/2}"""
+        rowsum = adj.sum(1) + 1e-8  # 避免除以 0
+        d_inv_sqrt = torch.pow(rowsum, -0.5).flatten()
+        d_mat_inv_sqrt = torch.diag(d_inv_sqrt)
+        return torch.mm(torch.mm(d_mat_inv_sqrt, adj), d_mat_inv_sqrt)
+
     def forward(self, inputs):
         # print(inputs.shape) #(100,11,1)
         if torch.sum(self.adj_A != self.adj_A):
             print('nan error in GCNencoder \n')
 
         # to amplify the value of A and accelerate convergence.
-        adj_A = torch.sinh(3.*self.adj_A)
+        adj_A1 = torch.sinh( 3. *self.adj_A)
+        adj_A_pos =F.relu(adj_A1)
+        adj_norm = self.normalize_adj(adj_A_pos)
 
-        # adj_Aforz = I-A^T
-        # adj_Aforz = preprocess_adj_new(adj_A1).float()
-        # print(f'adj_Aforz={adj_Aforz.shape}') #11,11
+        # MLP
+        x = F.leaky_relu((self.fc1(inputs))) #100,11,1 1*64 -> 11 * 64
+        # x = (self.fc2(H1)) #11 * 64  64*64 ->11 * 64 x.shape = 100,11,64
 
-        #adj_A = torch.eye(self.adj_A.size()[0]).float()######
-        # print("Weight dtype:", self.fc1.weight.dtype)
+        #GCN
+        gcn_x = self.gcn1(x, adj_norm)
+        # print(f'gcn_x={gcn_x.shape}')
+        B, N, H = gcn_x.shape  # 動態抓
+        gcn_x = gcn_x.view(B * N, H)
+        gcn_x = self.batchnorm1(gcn_x)
+        gcn_x = gcn_x.view(B, N, H)
+        # print("gcn_x.numel() =", gcn_x.numel())
 
-        H1 = F.leaky_relu((self.fc1(inputs))) #100,11,1 1*64 -> 11 * 64
-        x = (self.fc2(H1)) #11 * 64  64*64 ->11 * 64
-        gcn_x = self.gcn(x, adj_A)
-        # gcn_x = self.batchnorm(gcn_x)
-        # print(f"gcn_x={gcn_x.shape}") #100,11,64
+        H2 = F.leaky_relu(gcn_x)# fc3 fc4 = 64,64
 
-        H2 = F.leaky_relu((self.fc3(gcn_x)))# fc3 fc4 = 64,64
-        gcn_x2 =self.gcn(self.fc4(H2), adj_A)
+        # GCN
+        gcn_x2 =self.gcn2(self.fc4(H2), adj_norm)
+        #for testing X
+        B, N, H = gcn_x2.shape  # 動態抓
+        gcn_x2 = gcn_x2.view(B * N, H)
+        gcn_x2 = self.batchnorm2(gcn_x2)
+        gcn_x2 = gcn_x2.view(B, N, H)
 
         logits = gcn_x2+self.Wa
 
-        return x, logits, adj_A, self.z, self.z_positive, self.adj_A, self.Wa
+        return x, logits, adj_A1, self.z, self.z_positive, self.adj_A, self.Wa, adj_norm
 
 class GCNDecoder(nn.Module):
     """MLP decoder module."""
@@ -195,12 +209,15 @@ class GCNDecoder(nn.Module):
     def __init__(self, n_in, n_in_z, n_out, encoder, data_variable_size, batch_size,  n_hid,
                  do_prob=0.):
         super(GCNDecoder, self).__init__()
-        self.gcn = GCNLayer(n_hid, n_hid)
-        self.batchnorm = nn.BatchNorm1d(n_in)
+        self.gcn1 = GCNLayer(n_hid, n_hid)
+        self.gcn2 = GCNLayer(n_hid, n_hid)
+        self.batchnorm1 = nn.BatchNorm1d(n_hid)
+        self.batchnorm2 = nn.BatchNorm1d(n_hid)
         self.out_fc1 = nn.Linear(n_hid, n_hid, bias = True) #64,64
         self.out_fc2 = nn.Linear(n_hid, n_hid, bias = True)
         self.out_fc3 = nn.Linear(n_hid, n_hid, bias = True)
         self.out_fc4 = nn.Linear(n_hid, n_hid, bias = True)
+        self.out_fc5 = nn.Linear(n_hid, 1, bias = True)
         self.batch_size = batch_size
         self.data_variable_size = data_variable_size
 
@@ -220,28 +237,40 @@ class GCNDecoder(nn.Module):
                 m.bias.data.zero_()
 
 
-    def forward(self,inputs, input_z, n_in_node, origin_A, Wa):
+    def forward(self,inputs, input_z, n_in_node, adj_norm, Wa):
 
         #adj_A_new1 = (I-A^T)^(-1)
-        origin_A = origin_A.float()
+        adj_norm = adj_norm.float()
         input_z = input_z.float()
         # print(f"input_z= {input_z.shape}")#100,11,64
         Wa = Wa.float()
         # adj_A_new1 = preprocess_adj_new1(origin_A).float()  # 這裡就改成 float
         # adj_A_new1 = torch.linalg.inv(adj_A_new1)
 
-        gcn_x1 = self.gcn(input_z, origin_A)
-        # gcn_x1 = self.batchnorm(gcn_x1)
+        gcn_x1 = self.gcn1(input_z, adj_norm)#100,11,64
 
-        H1 = F.leaky_relu((self.out_fc1(gcn_x1)))
-        gcn_x2 = self.gcn(self.out_fc2(H1),origin_A)
-        gcn_x2 = self.batchnorm(gcn_x2)
-        H2 = F.leaky_relu(self.out_fc3(gcn_x2))
-        H3 = self.out_fc4(H2)
+        B, N, H = gcn_x1.shape  # 動態抓
+        gcn_x1 = gcn_x1.view(B * N, H)
+        gcn_x1 = self.batchnorm1(gcn_x1)
+        gcn_x1 = gcn_x1.view(B, N, H)
+
+
+        H1 = F.leaky_relu(gcn_x1)
+
+        gcn_x2 = self.gcn2(self.out_fc1(H1),adj_norm)#100,11,64
+
+        B, N, H = gcn_x2.shape  # 動態抓
+        gcn_x2 = gcn_x2.view(B * N, H)
+        gcn_x2 = self.batchnorm2(gcn_x2)
+        gcn_x2 = gcn_x2.view(B, N, H)
+
+
+        H2 = F.leaky_relu(gcn_x2)
+        H3 = self.out_fc3(self.out_fc2(H2))
 
         mat_z = H3+Wa
 
-        H4 = F.leaky_relu(self.out_fc1((mat_z)))
-        out = self.out_fc2(H4)
+        H4 = F.leaky_relu(self.out_fc4((mat_z)))
+        out = self.out_fc5(H4)
 
         return mat_z, out

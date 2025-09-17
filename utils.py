@@ -24,60 +24,60 @@ import argparse
 
 #from train import train
 
-parser = argparse.ArgumentParser()
-#=====================
-#graph configurations
-#=====================
-parser.add_argument('--data_type', type=str, default= 'real_world',
-                    choices=['synthetic', 'discrete', 'real'],
-                    help='choosing which experiment to do.')
-parser.add_argument('--data_sample_size', type=int, default=5000,
-                    help='the number of samples of data')
-parser.add_argument('--data_variable_size', type=int, default=10,
-                    help='the number of variables in synthetic generated data')
-parser.add_argument('--batch_size', type=int, default = 100,# note: should be divisible by sample size, otherwise throw an error
-                    help='Number of samples per batch.')
-parser.add_argument('--no-cuda', action='store_true', default=True,
-                    help='Disables CUDA training.')
-parser.add_argument('--no-factor', action='store_true', default=False,
-                    help='Disables factor graph model.')
-parser.add_argument('--x_dims', type=int, default=1, #changed here
-                    help='The number of input dimensions: default 1.')
-parser.add_argument('--z_dims', type=int, default=1,
-                    help='The number of latent variable dimensions: default the same as variable size.')
-parser.add_argument('--encoder-hidden', type=int, default=64,
-                    help='Number of hidden units.')
-parser.add_argument('--decoder-hidden', type=int, default=64,
-                    help='Number of hidden units.')
-parser.add_argument('--encoder-dropout', type=float, default=0.0,
-                    help='Dropout rate (1 - keep probability).')
-parser.add_argument('--decoder-dropout', type=float, default=0.0,
-                    help='Dropout rate (1 - keep probability).')
-
-#=================
-#training config
-#=================
-parser.add_argument('--seed', type=int, default=42, help='Random seed.')
-parser.add_argument('--lr', type=float, default=3e-3,  # basline rate = 1e-3
-                    help='Initial learning rate.')
-parser.add_argument('--lr-decay', type=int, default=200,
-                    help='After how epochs to decay LR by a factor of gamma.')
-parser.add_argument('--optimizer', type = str, default = 'Adam',
-                    help = 'the choice of optimizer used')
-parser.add_argument('--graph_threshold', type=  float, default = 0.3,  # 0.3 is good, 0.2 is error prune
-                    help = 'threshold for learned adjacency matrix binarization')
-parser.add_argument('--epochs', type=int, default= 300,
-                    help='Number of epochs to train.')
-parser.add_argument('--batch-size', type=int, default = 100, # note: should be divisible by sample size, otherwise throw an error
-                    help='Number of samples per batch.')
-
-
-
-
-args = parser.parse_args()
-args.cuda = not args.no_cuda and torch.cuda.is_available()
-args.factor = not args.no_factor
-print(args)
+# parser = argparse.ArgumentParser()
+# #=====================
+# #graph configurations
+# #=====================
+# parser.add_argument('--data_type', type=str, default= 'real_world',
+#                     choices=['synthetic', 'discrete', 'real'],
+#                     help='choosing which experiment to do.')
+# parser.add_argument('--data_sample_size', type=int, default=5000,
+#                     help='the number of samples of data')
+# parser.add_argument('--data_variable_size', type=int, default=10,
+#                     help='the number of variables in synthetic generated data')
+# parser.add_argument('--batch_size', type=int, default = 100,# note: should be divisible by sample size, otherwise throw an error
+#                     help='Number of samples per batch.')
+# parser.add_argument('--no-cuda', action='store_true', default=True,
+#                     help='Disables CUDA training.')
+# parser.add_argument('--no-factor', action='store_true', default=False,
+#                     help='Disables factor graph model.')
+# parser.add_argument('--x_dims', type=int, default=1, #changed here
+#                     help='The number of input dimensions: default 1.')
+# parser.add_argument('--z_dims', type=int, default=1,
+#                     help='The number of latent variable dimensions: default the same as variable size.')
+# parser.add_argument('--encoder-hidden', type=int, default=64,
+#                     help='Number of hidden units.')
+# parser.add_argument('--decoder-hidden', type=int, default=64,
+#                     help='Number of hidden units.')
+# parser.add_argument('--encoder-dropout', type=float, default=0.0,
+#                     help='Dropout rate (1 - keep probability).')
+# parser.add_argument('--decoder-dropout', type=float, default=0.0,
+#                     help='Dropout rate (1 - keep probability).')
+#
+# #=================
+# #training config
+# #=================
+# parser.add_argument('--seed', type=int, default=42, help='Random seed.')
+# parser.add_argument('--lr', type=float, default=3e-3,  # basline rate = 1e-3
+#                     help='Initial learning rate.')
+# parser.add_argument('--lr-decay', type=int, default=200,
+#                     help='After how epochs to decay LR by a factor of gamma.')
+# parser.add_argument('--optimizer', type = str, default = 'Adam',
+#                     help = 'the choice of optimizer used')
+# parser.add_argument('--graph_threshold', type=  float, default = 0.3,  # 0.3 is good, 0.2 is error prune
+#                     help = 'threshold for learned adjacency matrix binarization')
+# parser.add_argument('--epochs', type=int, default= 300,
+#                     help='Number of epochs to train.')
+# parser.add_argument('--batch-size', type=int, default = 100, # note: should be divisible by sample size, otherwise throw an error
+#                     help='Number of samples per batch.')
+#
+#
+#
+#
+# args = parser.parse_args()
+# args.cuda = not args.no_cuda and torch.cuda.is_available()
+# args.factor = not args.no_factor
+# print(args)
 
 def matrix_poly(matrix, d):
     x = torch.eye(d).double()+ torch.div(matrix, d)
@@ -217,7 +217,7 @@ def load_data(args, batch_size = 1000,data_type='real_world', debug= False):
                 font_size=12,
                 node_size=600)
 
-        plt.show()
+        # plt.show()
 
 
         #轉成 torch tensor
@@ -240,12 +240,12 @@ def load_data(args, batch_size = 1000,data_type='real_world', debug= False):
 
 
 
-if __name__ == '__main__':
-    train_loader, valid_loader, test_loader, ground_truth_G = load_data(args, args.batch_size, args.data_type)
-    # print(len(train_loader.shape)) #853
-    for batch_idx, (data, relations) in enumerate(train_loader):
-        if batch_idx == 0:
-            print(f"data={data}")
-            print(f"relations={relations}")
-            relations = relations.unsqueeze(2)
-            print(f"relations={relations}")
+# if __name__ == '__main__':
+#     train_loader, valid_loader, test_loader, ground_truth_G = load_data(args, args.batch_size, args.data_type)
+#     # print(len(train_loader.shape)) #853
+#     for batch_idx, (data, relations) in enumerate(train_loader):
+#         if batch_idx == 0:
+#             print(f"data={data}")
+#             print(f"relations={relations}")
+#             relations = relations.unsqueeze(2)
+#             print(f"relations={relations}")

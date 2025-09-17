@@ -44,7 +44,7 @@ parser.add_argument('--decoder-dropout', type=float, default=0.0,
 #training config
 #=================
 parser.add_argument('--seed', type=int, default=42, help='Random seed.')
-parser.add_argument('--lr', type=float, default=3e-3,  # basline rate = 1e-3
+parser.add_argument('--lr', type=float, default=1e-3,  # basline rate = 1e-3
                     help='Initial learning rate.')
 parser.add_argument('--lr-decay', type=int, default=200,
                     help='After how epochs to decay LR by a factor of gamma.')
@@ -52,7 +52,7 @@ parser.add_argument('--optimizer', type = str, default = 'Adam',
                     help = 'the choice of optimizer used')
 parser.add_argument('--graph_threshold', type=  float, default = 0.3,  # 0.3 is good, 0.2 is error prune
                     help = 'threshold for learned adjacency matrix binarization')
-parser.add_argument('--epochs', type=int, default= 300,
+parser.add_argument('--epochs', type=int, default= 150,
                     help='Number of epochs to train.')
 parser.add_argument('--batch_size', type=int, default = 100, # note: should be divisible by sample size, otherwise throw an error
                     help='Number of samples per batch.')
@@ -86,7 +86,7 @@ args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 args.factor = not args.no_factor
 print(args)
-
+torch.manual_seed(args.seed)
 
 
 # Save model and meta-data. Always saves in a new sub-folder.
@@ -132,12 +132,13 @@ train_loader, valid_loader, test_loader, ground_truth_G = load_data( args, args.
 #adj 可給ground truth adj
 #==========
 num_nodes = args.data_variable_size
-adj_A = np.zeros((num_nodes, num_nodes))
+# adj_A = np.zeros((num_nodes, num_nodes))
+adj_A = np.random.randn(num_nodes, num_nodes) * 0.01
 
 #========================
 #encoder decoder setting
 #========================
-encoder = GCNEncoder(args.data_variable_size * args.x_dims, args.x_dims, args.encoder_hidden,
+encoder = GCNEncoder(args.data_variable_size, args.x_dims, args.encoder_hidden,
                          int(args.z_dims), adj_A,
                          batch_size = args.batch_size,
                          do_prob = args.encoder_dropout, factor = args.factor).double()
@@ -151,7 +152,15 @@ decoder = GCNDecoder(args.data_variable_size * args.x_dims,
 #keep X and fc same dtype float32
 encoder.float()
 decoder.float()
+print("Checking encoder parameters:")
+for name, param in encoder.named_parameters():
+    print(f"Found parameter: {name}")
 
+print("\nChecking if adj_A is in the list:")
+if "adj_A" in [name for name, _ in encoder.named_parameters()]:
+    print("adj_A is correctly registered!")
+else:
+    print("adj_A is NOT registered as a parameter! This is the core problem.")
 encoder.init_weights()
 decoder.init_weights()
 
@@ -193,6 +202,9 @@ def update_optimizer(optimizer, original_lr, c_A):
 #=========
 #training
 #=========
+# 設定梯度裁剪的最大範數值
+# max_grad_norm = 1.0
+
 def train(epoch, best_val_loss, ground_truth_G, lambda_A, c_A, optimizer):
     t = time.time()
     nll_train = []
@@ -210,9 +222,9 @@ def train(epoch, best_val_loss, ground_truth_G, lambda_A, c_A, optimizer):
         optimizer.zero_grad()
         #data.shape = (853,11)
         data = data.unsqueeze(-1)#(100,11,1)
-        enc_x, logits, origin_A, z_gap, z_positive, myA, Wa = encoder(data)  # logits is of size: [num_sims, z_dims]
+        enc_x, logits, origin_A, z_gap, z_positive, myA, Wa, adj_norm = encoder(data)  # logits is of size: [num_sims, z_dims]
         edges = logits
-        dec_x, output= decoder(data, edges, args.data_variable_size * args.x_dims, origin_A, Wa)
+        dec_x, output= decoder(data, edges, args.data_variable_size * args.x_dims, adj_norm, Wa)
         if torch.sum(output != output):
             print('nan error in train\n')
 
@@ -238,7 +250,22 @@ def train(epoch, best_val_loss, ground_truth_G, lambda_A, c_A, optimizer):
         loss += lambda_A * h_A + 0.5 * c_A * h_A * h_A + 100. * torch.trace(
             origin_A * origin_A) + sparse_loss  # +  0.01 * torch.sum(variance * variance)
         loss.backward()
-        loss = optimizer.step()
+
+        # 這裡會檢查所有參數的梯度
+        all_params = list(encoder.named_parameters()) + list(decoder.named_parameters())
+
+        # # 遍歷所有參數，檢查它們是否有梯度
+        # for name, param in all_params:
+        #     if param.grad is not None:
+        #         # 只印出有梯度的參數，如果梯度為零可以特別標記
+        #         grad_norm = param.grad.norm().item()
+        #         if grad_norm > 1e-8:  # 設定一個閾值來避免印出極小的數值
+        #             print(f"Epoch {epoch}, Parameter: {name}, Grad Norm: {grad_norm:.6f}")
+        #     else:
+        #         # 這是最關鍵的檢查：如果梯度為 None，代表計算圖斷了
+        #         print(f"Epoch {epoch}, Parameter: {name}, Grad is None!")
+
+        optimizer.step()
         myA.data = stau(myA.data, args.tau_A * lr)
 
         if torch.sum(origin_A != origin_A):
