@@ -44,7 +44,7 @@ parser.add_argument('--decoder-dropout', type=float, default=0.0,
 #training config
 #=================
 parser.add_argument('--seed', type=int, default=42, help='Random seed.')
-parser.add_argument('--lr', type=float, default=1e-3,  # basline rate = 1e-3
+parser.add_argument('--lr', type=float, default=3e-3,  # basline rate = 1e-3
                     help='Initial learning rate.')
 parser.add_argument('--lr-decay', type=int, default=200,
                     help='After how epochs to decay LR by a factor of gamma.')
@@ -58,11 +58,11 @@ parser.add_argument('--batch_size', type=int, default = 100, # note: should be d
                     help='Number of samples per batch.')
 parser.add_argument('--gamma', type=float, default= 1.0,
                     help='LR decay factor.')
-parser.add_argument('--tau_A', type = float, default=0.0,
+parser.add_argument('--tau_A', type = float, default=0.01,
                     help='coefficient for L-1 norm of A.')
 parser.add_argument('--lambda_A',  type = float, default= 0.,
                     help='coefficient for DAG constraint h(A).')
-parser.add_argument('--c_A',  type = float, default= 1,
+parser.add_argument('--c_A',  type = float, default= 0.1,
                     help='coefficient for absolute value h(A).')
 parser.add_argument('--h_tol', type=float, default = 1e-8,
                     help='the tolerance of error of h(A) to zero')
@@ -247,7 +247,7 @@ def train(epoch, best_val_loss, ground_truth_G, lambda_A, c_A, optimizer):
 
         #compute h(A)
         h_A = _h_A(origin_A, args.data_variable_size)
-        loss += lambda_A * h_A + 0.5 * c_A * h_A * h_A + 100. * torch.trace(
+        loss += lambda_A * h_A + 0.5 * c_A * h_A * h_A + 0.001 * torch.trace(
             origin_A * origin_A) + sparse_loss  # +  0.01 * torch.sum(variance * variance)
         loss.backward()
 

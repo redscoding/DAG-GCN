@@ -147,6 +147,7 @@ class GCNEncoder(nn.Module):
         self.z = nn.Parameter(torch.tensor(tol))
         self.z_positive = nn.Parameter(torch.ones_like(torch.from_numpy(adj_A)).double())
         self.init_weights()
+        self.softplus = nn.Softplus()
 
     def init_weights(self):
         for m in self.modules():
@@ -173,15 +174,19 @@ class GCNEncoder(nn.Module):
 
         # to amplify the value of A and accelerate convergence.
         adj_A1 = torch.sinh( 3. *self.adj_A)
-        adj_A_pos =F.relu(adj_A1)
-        adj_norm = self.normalize_adj(adj_A_pos)
+        adj_A_pos =self.softplus(adj_A1)
+        adj_A_pos1 = self.normalize_adj(adj_A_pos)
+
+        pre_adj_norm = preprocess_adj_new(adj_A_pos1) #I-A^T
+
+        pre_adj_norm = pre_adj_norm.float()
 
         # MLP
         x = F.leaky_relu((self.fc1(inputs))) #100,11,1 1*64 -> 11 * 64
         # x = (self.fc2(H1)) #11 * 64  64*64 ->11 * 64 x.shape = 100,11,64
 
         #GCN
-        gcn_x = self.gcn1(x, adj_norm)
+        gcn_x = self.gcn1(x, pre_adj_norm)
         # print(f'gcn_x={gcn_x.shape}')
         B, N, H = gcn_x.shape  # 動態抓
         gcn_x = gcn_x.view(B * N, H)
@@ -192,7 +197,7 @@ class GCNEncoder(nn.Module):
         H2 = F.leaky_relu(gcn_x)# fc3 fc4 = 64,64
 
         # GCN
-        gcn_x2 =self.gcn2(self.fc4(H2), adj_norm)
+        gcn_x2 =self.gcn2(self.fc4(H2), pre_adj_norm)
         #for testing X
         B, N, H = gcn_x2.shape  # 動態抓
         gcn_x2 = gcn_x2.view(B * N, H)
@@ -201,7 +206,7 @@ class GCNEncoder(nn.Module):
 
         logits = gcn_x2+self.Wa
 
-        return x, logits, adj_A1, self.z, self.z_positive, self.adj_A, self.Wa, adj_norm
+        return x, logits, adj_A1, self.z, self.z_positive, self.adj_A, self.Wa, adj_A_pos
 
 class GCNDecoder(nn.Module):
     """MLP decoder module."""
@@ -247,7 +252,11 @@ class GCNDecoder(nn.Module):
         # adj_A_new1 = preprocess_adj_new1(origin_A).float()  # 這裡就改成 float
         # adj_A_new1 = torch.linalg.inv(adj_A_new1)
 
-        gcn_x1 = self.gcn1(input_z, adj_norm)#100,11,64
+        pre_adj_norm = preprocess_adj_new1(adj_norm)
+
+        pre_adj_norm = pre_adj_norm.float()
+
+        gcn_x1 = self.gcn1(input_z, pre_adj_norm)#100,11,64
 
         B, N, H = gcn_x1.shape  # 動態抓
         gcn_x1 = gcn_x1.view(B * N, H)
@@ -257,7 +266,7 @@ class GCNDecoder(nn.Module):
 
         H1 = F.leaky_relu(gcn_x1)
 
-        gcn_x2 = self.gcn2(self.out_fc1(H1),adj_norm)#100,11,64
+        gcn_x2 = self.gcn2(self.out_fc1(H1),pre_adj_norm)#100,11,64
 
         B, N, H = gcn_x2.shape  # 動態抓
         gcn_x2 = gcn_x2.view(B * N, H)

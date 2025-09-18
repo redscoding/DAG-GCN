@@ -171,8 +171,9 @@ def preprocess_adj_new1(adj):
 #path
 _DIR = os.path.dirname(os.path.abspath(__file__))
 _REAL_WORLD_DIR = os.path.join(_DIR, "data/")
-def load_data(args, batch_size = 1000,data_type='real_world', debug= False):
-    # data_sample_size, num_nodes = args.data_sample_size, args.data_variable_size
+from sklearn.preprocessing import StandardScaler
+
+def load_data(args, batch_size = 1000, data_type='real_world', debug=False):
     if args.data_type == 'real_world':
         df = pd.read_csv(os.path.join(_REAL_WORLD_DIR, "sachs_cd3cd28.csv"))
         label_mapping = {
@@ -190,53 +191,41 @@ def load_data(args, batch_size = 1000,data_type='real_world', debug= False):
         }
         inverse_mapping = {v: k for k, v in label_mapping.items()}
         df.rename(columns=inverse_mapping, inplace=True)
-        # print(df.shape) #(853, 11)
 
-        #ground truth
+        # ground truth graph
         graph = {
-            7: [10, 9, 6, 5, 1, 0, 4],  # PKA → Jnk, P38, Akt, Erk, Mek, Raf, PIP3
-            8: [10, 9, 1, 0],  # PKC → Jnk, P38, Mek, Raf
-            4: [6, 3, 2, 7],  # PIP3 → Akt, PIP2, Plcg, PKA
-            1: [5],  # Mek → Erk
-            0: [1],  # Raf → Mek
-            3: [8],  # PIP2 → PKC
-            2: [8, 3],  # Plcg → PKC, PIP2
+            7: [10, 9, 6, 5, 1, 0, 4],
+            8: [10, 9, 1, 0],
+            4: [6, 3, 2, 7],
+            1: [5],
+            0: [1],
+            3: [8],
+            2: [8, 3],
         }
-        # graph = {2: [3, 4], 4: [3], 7: [1, 5, 6, 10, 9, 0], 8: [1, 7, 10, 0, 9], 0: [1], 1: [5], 5: [6]}
-
         G = nx.DiGraph(graph)
 
-        # #visulize
-        import matplotlib.pyplot as plt
-        nx.draw(G,
-                pos=nx.circular_layout(G),
-                node_color='w',
-                edge_color='b',
-                with_labels=True,
-                labels=label_mapping,
-                font_size=12,
-                node_size=600)
+        # === ✨ 標準化每個變數 ✨ ===
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(df.values)
 
-        # plt.show()
-
-
-        #轉成 torch tensor
-        X = torch.FloatTensor(df.values)
-        # print(X.shape)
+        # 轉成 torch tensor
+        X = torch.FloatTensor(X_scaled)#float32
         feat_train = X
         feat_valid = X
         feat_test =  X
 
-        #建立 Dataset
+        # 建立 Dataset
         train_data = TensorDataset(feat_train, feat_train)
         valid_data = TensorDataset(feat_valid, feat_train)
         test_data = TensorDataset(feat_test, feat_train)
-        #建立 DataLoader
+
+        # 建立 DataLoader
         train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
         valid_loader = DataLoader(valid_data, batch_size=batch_size)
         test_loader = DataLoader(test_data, batch_size=batch_size)
 
-        return train_loader, valid_loader, test_loader, G
+        return train_loader, valid_loader, test_loader, G#, scaler
+
 
 
 
