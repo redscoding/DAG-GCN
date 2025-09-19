@@ -203,6 +203,8 @@ def load_data(args, batch_size = 1000, data_type='real_world', debug=False):
             2: [8, 3],
         }
         G = nx.DiGraph(graph)
+        G.add_nodes_from(range(11))
+
 
         # === ✨ 標準化每個變數 ✨ ===
         scaler = StandardScaler()
@@ -210,6 +212,7 @@ def load_data(args, batch_size = 1000, data_type='real_world', debug=False):
 
         # 轉成 torch tensor
         X = torch.FloatTensor(X_scaled)#float32
+        # X = torch.FloatTensor(df.values)
         feat_train = X
         feat_valid = X
         feat_test =  X

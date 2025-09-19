@@ -27,8 +27,8 @@ class Encoder(nn.Module):
         self.fc2 = nn.Linear(n_hid, n_out, bias = True)
         self.dropout_prob = do_prob
         self.batch_size = batch_size
-        self.z = nn.Parameter(torch.tensor(tol))
-        self.z_positive = nn.Parameter(torch.ones_like(torch.from_numpy(adj_A)).double())
+        self.z = nn.Parameter(torch.tensor(tol), requires_grad= True)
+        self.z_positive = nn.Parameter(torch.ones_like(torch.from_numpy(adj_A)).double(), requires_grad = True)
         self.init_weights()
 
 
@@ -108,7 +108,7 @@ class GCNLayer(nn.Module):
         super(GCNLayer, self).__init__()
         self.linear = nn.Linear(in_features, out_features, bias=bias)
 
-    def forward(self, x, adj):
+    def forward(self, x, adj, W):
         """
         x: 節點特徵矩陣 (n_nodes x in_features)
         adj: 鄰接矩陣 (n_nodes x n_nodes)，這裡是學習到的 A
@@ -116,8 +116,9 @@ class GCNLayer(nn.Module):
 
         # 如果需要正規化，可以加上 D^{-1/2} A D^{-1/2}
         # GCN 聚合公式
-        out = torch.matmul(adj, x)   # A * X
-        out = self.linear(out)            # (AX)W
+        # out = torch.matmul(adj, x)   # A * X
+        # out = self.linear(out)            # (AX)W
+        out = adj * W @ x
 
         return out
 
@@ -126,6 +127,8 @@ class GCNEncoder(nn.Module):
     def __init__(self, num_n, n_xdims, n_hid, n_out, adj_A, batch_size, do_prob=0., factor=True, tol=0.1):
         super(GCNEncoder, self).__init__()
         self.adj_A = nn.Parameter(Variable(torch.from_numpy(adj_A).double(), requires_grad=True))
+        self.learnable_D = nn.Parameter(torch.ones(num_n))
+        self.learnable_W = nn.Parameter(torch.ones(adj_A.shape))
         self.factor = factor
         self.n_hid = n_hid
         self.num_n = num_n
@@ -160,10 +163,10 @@ class GCNEncoder(nn.Module):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
 
+#是否有除以0現象
     def normalize_adj(self, adj):
         """對 A 做對稱正規化: D^{-1/2} A D^{-1/2}"""
-        rowsum = adj.sum(1) + 1e-8  # 避免除以 0
-        d_inv_sqrt = torch.pow(rowsum, -0.5).flatten()
+        d_inv_sqrt = torch.pow(self.learnable_D, -0.5).flatten()
         d_mat_inv_sqrt = torch.diag(d_inv_sqrt)
         return torch.mm(torch.mm(d_mat_inv_sqrt, adj), d_mat_inv_sqrt)
 
@@ -177,7 +180,7 @@ class GCNEncoder(nn.Module):
         adj_A_pos =self.softplus(adj_A1)
         adj_A_pos1 = self.normalize_adj(adj_A_pos)
 
-        pre_adj_norm = preprocess_adj_new(adj_A_pos1) #I-A^T
+        pre_adj_norm = preprocess_adj_new(adj_A_pos) #I-A^T
 
         pre_adj_norm = pre_adj_norm.float()
 
@@ -186,7 +189,7 @@ class GCNEncoder(nn.Module):
         # x = (self.fc2(H1)) #11 * 64  64*64 ->11 * 64 x.shape = 100,11,64
 
         #GCN
-        gcn_x = self.gcn1(x, pre_adj_norm)
+        gcn_x = self.gcn1(x, pre_adj_norm, self.learnable_W)
         # print(f'gcn_x={gcn_x.shape}')
         B, N, H = gcn_x.shape  # 動態抓
         gcn_x = gcn_x.view(B * N, H)
@@ -197,7 +200,7 @@ class GCNEncoder(nn.Module):
         H2 = F.leaky_relu(gcn_x)# fc3 fc4 = 64,64
 
         # GCN
-        gcn_x2 =self.gcn2(self.fc4(H2), pre_adj_norm)
+        gcn_x2 =self.gcn2(self.fc4(H2), pre_adj_norm, self.learnable_W)
         #for testing X
         B, N, H = gcn_x2.shape  # 動態抓
         gcn_x2 = gcn_x2.view(B * N, H)
@@ -218,6 +221,7 @@ class GCNDecoder(nn.Module):
         self.gcn2 = GCNLayer(n_hid, n_hid)
         self.batchnorm1 = nn.BatchNorm1d(n_hid)
         self.batchnorm2 = nn.BatchNorm1d(n_hid)
+        self.learnable_W = nn.Parameter(torch.ones(data_variable_size, data_variable_size))
         self.out_fc1 = nn.Linear(n_hid, n_hid, bias = True) #64,64
         self.out_fc2 = nn.Linear(n_hid, n_hid, bias = True)
         self.out_fc3 = nn.Linear(n_hid, n_hid, bias = True)
@@ -256,7 +260,7 @@ class GCNDecoder(nn.Module):
 
         pre_adj_norm = pre_adj_norm.float()
 
-        gcn_x1 = self.gcn1(input_z, pre_adj_norm)#100,11,64
+        gcn_x1 = self.gcn1(input_z, pre_adj_norm,self.learnable_W )#100,11,64
 
         B, N, H = gcn_x1.shape  # 動態抓
         gcn_x1 = gcn_x1.view(B * N, H)
@@ -266,7 +270,7 @@ class GCNDecoder(nn.Module):
 
         H1 = F.leaky_relu(gcn_x1)
 
-        gcn_x2 = self.gcn2(self.out_fc1(H1),pre_adj_norm)#100,11,64
+        gcn_x2 = self.gcn2(self.out_fc1(H1),pre_adj_norm,self.learnable_W )#100,11,64
 
         B, N, H = gcn_x2.shape  # 動態抓
         gcn_x2 = gcn_x2.view(B * N, H)
