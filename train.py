@@ -222,15 +222,14 @@ def update_optimizer(optimizer, original_lr, c_A):
 # 設定梯度裁剪的最大範數值
 # max_grad_norm = 1.0
 
-def train(epoch, best_val_loss, ground_truth_G, lambda_A, c_A, optimizer, best_shd, best_tpr):
+def train(epoch, best_val_loss, ground_truth_G, lambda_A, c_A, optimizer, best_shd, best_tpr, best_tpr_graph, best_SHD_graph):
     t = time.time()
     nll_train = []
     kl_train = []
     mse_train = []
     shd_trian = []
     tpr_train = []
-    best_tpr_graph = None  # 或 np.zeros((graph_size, graph_size))
-    best_tpr = -1  # 確保任何 tpr 都可能更新
+
 
     encoder.train()
     decoder.train()
@@ -290,6 +289,8 @@ def train(epoch, best_val_loss, ground_truth_G, lambda_A, c_A, optimizer, best_s
         graph = origin_A.data.clone().numpy()
         graph[np.abs(graph) < args.graph_threshold] = 0
 
+        print("Epoch", epoch, "edges after threshold:", np.count_nonzero(graph))
+
         fdr, tpr, fpr, shd, nnz = count_accuracy(ground_truth_G, nx.DiGraph(graph))
 
         mse_train.append(F.mse_loss(preds, target).item())
@@ -298,13 +299,16 @@ def train(epoch, best_val_loss, ground_truth_G, lambda_A, c_A, optimizer, best_s
         shd_trian.append(shd)
         tpr_train.append(tpr)
 
-        if shd < best_shd:
-            best_shd = shd
-            best_SHD_graph = graph.copy()
-
-        if (tpr > best_tpr) and (shd < 36):
-            best_tpr = tpr
-            best_tpr_graph = graph.copy()
+        # if shd < best_shd:
+        #     best_shd = shd
+        #     best_SHD_graph = graph.copy()
+        #     print("update shd at epoch", epoch)
+        #
+        #
+        # if (tpr > best_tpr) and (shd <= 36):
+        #     best_tpr = tpr
+        #     best_tpr_graph = graph.copy()
+        #     print("update tpr at epoch", epoch)
 
     print(h_A.item())
     nll_val = []
@@ -338,7 +342,7 @@ def train(epoch, best_val_loss, ground_truth_G, lambda_A, c_A, optimizer, best_s
     if 'graph' not in vars():
         print('error on assign')
 
-    return np.mean(np.mean(kl_train) + np.mean(nll_train)), np.mean(nll_train), np.mean(mse_train), graph, origin_A, best_SHD_graph, best_tpr_graph
+    return np.mean(np.mean(kl_train) + np.mean(nll_train)), np.mean(nll_train), np.mean(mse_train), graph, origin_A, shd, tpr#, best_SHD_graph, best_tpr_graph
 
 ###########################
 # main
@@ -353,7 +357,7 @@ best_epoch = 0
 best_ELBO_graph = []
 best_NLL_graph = []
 best_MSE_graph = []
-best_shd_graph = []
+best_SHD_graph = []
 best_tpr_graph = []
 # optimizer step on hyparameters
 c_A = args.c_A
@@ -367,7 +371,15 @@ try:
     for step_k in range(k_max_iter):
         while c_A < 1e+20:
             for epoch in range(args.epochs):
-                ELBO_loss, NLL_loss, MSE_loss, graph, origin_A, shd_G, tpr_G = train(epoch, best_ELBO_loss, ground_truth_G, lambda_A, c_A, optimizer, best_shd, best_tpr)
+                #  return np.mean(np.mean(kl_train) + np.mean(nll_train)), np.mean(nll_train), np.mean(mse_train), graph, origin_A, shd, tpr
+                ELBO_loss, NLL_loss, MSE_loss, graph, origin_A, shd_new, tpr_new= train(epoch, best_ELBO_loss, ground_truth_G, lambda_A, c_A, optimizer,best_shd, best_tpr, best_SHD_graph, best_tpr_graph)
+                # best_shd = best_shd_new
+                # best_tpr = best_tpr_new
+                # best_shd_graph = shd_G
+                # best_tpr_graph = tpr_G
+                print(
+                    f"[DEBUG] epoch {epoch}, shd_new={shd_new}, best_shd={best_shd}, tpr_new={tpr_new}, best_tpr={best_tpr}")
+
                 if ELBO_loss < best_ELBO_loss:
                     best_ELBO_loss = ELBO_loss
                     best_epoch = epoch
@@ -382,6 +394,18 @@ try:
                     best_MSE_loss = MSE_loss
                     best_epoch = epoch
                     best_MSE_graph = graph
+
+                if shd_new <= best_shd and  np.count_nonzero(graph)>0:
+                    best_shd = shd_new
+                    best_SHD_graph = graph.copy()
+                    print("update shd at epoch", epoch)
+
+                if (tpr_new >= best_tpr) and (shd_new <= 36):
+                    best_tpr = tpr_new
+                    best_tpr_graph = graph.copy()
+                    print("update tpr at epoch", epoch)
+
+
 
             print("Optimization Finished!")
             print("Best Epoch: {:04d}".format(best_epoch))
@@ -426,14 +450,14 @@ try:
     fdr, tpr, fpr, shd, nnz = count_accuracy(ground_truth_G, nx.DiGraph(best_MSE_graph))
     print('Best MSE Graph Accuracy: fdr', fdr, ' tpr ', tpr, ' fpr ', fpr, 'shd', shd, 'nnz', nnz)
 
-    print(shd_G)
+    print(best_SHD_graph)
     print(nx.to_numpy_array(ground_truth_G))
-    fdr, tpr, fpr, shd, nnz = count_accuracy(ground_truth_G, nx.DiGraph(shd_G))
+    fdr, tpr, fpr, shd, nnz = count_accuracy(ground_truth_G, nx.DiGraph(best_SHD_graph))
     print('Best SHD Graph Accuracy: fdr', fdr, ' tpr ', tpr, ' fpr ', fpr, 'shd', shd, 'nnz', nnz)
 
-    print(tpr_G)
+    print(best_tpr_graph)
     print(nx.to_numpy_array(ground_truth_G))
-    fdr, tpr, fpr, shd, nnz = count_accuracy(ground_truth_G, nx.DiGraph(tpr_G))
+    fdr, tpr, fpr, shd, nnz = count_accuracy(ground_truth_G, nx.DiGraph(best_tpr_graph))
     print('Best tpr Graph Accuracy: fdr', fdr, ' tpr ', tpr, ' fpr ', fpr, 'shd', shd, 'nnz', nnz)
 
     graph = origin_A.data.clone().numpy()
