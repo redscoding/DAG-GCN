@@ -92,6 +92,14 @@ def nll_gaussian(preds, target, variance, add_const=False):
         neg_log_p += const
     return neg_log_p.sum() / (target.size(0))
 
+def kl_gaussian(preds, zsize):
+    predsnew = preds.squeeze(1)
+    mu = predsnew[:,0:zsize]
+    log_sigma = predsnew[:,zsize:2*zsize]
+    kl_div = torch.exp(2*log_sigma) - 2*log_sigma + mu * mu
+    kl_sum = kl_div.sum()
+    return (kl_sum / (preds.size(0)) - zsize)*0.5
+
 
 def count_accuracy(G_true: nx.DiGraph,
                    G: nx.DiGraph,
@@ -161,11 +169,11 @@ def kl_gaussian_sem(preds):
     return (kl_sum / (preds.size(0)))*0.5
 
 def preprocess_adj_new(adj):
-    adj_normalized = (torch.eye(adj.shape[0]).double() + (adj.transpose(0,1)))
+    adj_normalized = (torch.eye(adj.shape[0]).double() - (adj.transpose(0,1)))
     return adj_normalized
 
 def preprocess_adj_new1(adj):
-    adj_normalized = (torch.eye(adj.shape[0]).double() - (adj.transpose(0,1)))
+    adj_normalized = torch.inverse(torch.eye(adj.shape[0]).double()-adj.transpose(0,1))
     return adj_normalized
 
 #path
@@ -205,29 +213,31 @@ def load_data(args, batch_size = 1000, data_type='real_world', debug=False):
         G = nx.DiGraph(graph)
         G.add_nodes_from(range(11))
 
+    elif args.data_type == 'synthetic':
+        df = pd.read_csv(os.path.join(_REAL_WORLD_DIR, "synthetic_data.csv"))
+        G = nx.read_edgelist("data/ground_truth_graph.txt", create_using= nx.DiGraph, nodetype=int)
 
-        # === ✨ 標準化每個變數 ✨ ===
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(df.values)
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(df.values)
 
-        # 轉成 torch tensor
-        X = torch.FloatTensor(X_scaled)#float32
-        # X = torch.FloatTensor(df.values)
-        feat_train = X
-        feat_valid = X
-        feat_test =  X
+    # 轉成 torch tensor
+    X = torch.FloatTensor(X_scaled)#float32
+    # X = torch.FloatTensor(df.values)
+    feat_train = X
+    feat_valid = X
+    feat_test =  X
 
-        # 建立 Dataset
-        train_data = TensorDataset(feat_train, feat_train)
-        valid_data = TensorDataset(feat_valid, feat_train)
-        test_data = TensorDataset(feat_test, feat_train)
+    # 建立 Dataset
+    train_data = TensorDataset(feat_train, feat_train)
+    valid_data = TensorDataset(feat_valid, feat_train)
+    test_data = TensorDataset(feat_test, feat_train)
 
-        # 建立 DataLoader
-        train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
-        valid_loader = DataLoader(valid_data, batch_size=batch_size)
-        test_loader = DataLoader(test_data, batch_size=batch_size)
+    # 建立 DataLoader
+    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
+    valid_loader = DataLoader(valid_data, batch_size=batch_size)
+    test_loader = DataLoader(test_data, batch_size=batch_size)
 
-        return train_loader, valid_loader, test_loader, G#, scaler
+    return train_loader, valid_loader, test_loader, G#, scaler
 
 
 

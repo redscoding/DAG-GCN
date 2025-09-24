@@ -18,7 +18,7 @@ parser = argparse.ArgumentParser()
 #graph configurations
 #=====================
 parser.add_argument('--data_type', type=str, default= 'real_world',
-                    choices=['synthetic', 'discrete', 'real'],
+                    choices=['synthetic', 'discrete', 'real','real_world'],
                     help='choosing which experiment to do.')
 parser.add_argument('--data_sample_size', type=int, default=5000,
                     help='the number of samples of data')
@@ -61,7 +61,7 @@ parser.add_argument('--batch_size', type=int, default = 100, # note: should be d
                     help='Number of samples per batch.')
 parser.add_argument('--gamma', type=float, default= 1.0,
                     help='LR decay factor.')
-parser.add_argument('--tau_A', type = float, default=0.,
+parser.add_argument('--tau_A', type = float, default=0., #0.01學不到資訊
                     help='coefficient for L-1 norm of A.')
 parser.add_argument('--lambda_A',  type = float, default= 0.,
                     help='coefficient for DAG constraint h(A).')
@@ -135,8 +135,8 @@ train_loader, valid_loader, test_loader, ground_truth_G = load_data( args, args.
 #adj 可給ground truth adj
 #==========
 num_nodes = args.data_variable_size
-adj_A = np.zeros((num_nodes, num_nodes))
-# adj_A = np.random.randn(num_nodes, num_nodes) * 0.01
+# adj_A = np.zeros((num_nodes, num_nodes))
+adj_A = np.random.randn(num_nodes, num_nodes) * 0.01
 
 #========================
 #encoder decoder setting
@@ -155,15 +155,15 @@ decoder = GCNDecoder(args.data_variable_size * args.x_dims,
 #keep X and fc same dtype float32
 encoder.float()
 decoder.float()
-print("Checking encoder parameters:")
-for name, param in encoder.named_parameters():
-    print(f"Found parameter: {name}")
-
-print("\nChecking if adj_A is in the list:")
-if "adj_A" in [name for name, _ in encoder.named_parameters()]:
-    print("adj_A is correctly registered!")
-else:
-    print("adj_A is NOT registered as a parameter! This is the core problem.")
+# print("Checking encoder parameters:")
+# for name, param in encoder.named_parameters():
+#     print(f"Found parameter: {name}")
+#
+# print("\nChecking if adj_A is in the list:")
+# if "adj_A" in [name for name, _ in encoder.named_parameters()]:
+#     print("adj_A is correctly registered!")
+# else:
+#     print("adj_A is NOT registered as a parameter! This is the core problem.")
 encoder.init_weights()
 decoder.init_weights()
 #=================
@@ -181,6 +181,8 @@ decoder.init_weights()
 #                          do_prob=args.decoder_dropout).double()
 # encoder.float()
 # decoder.float()
+# encoder.init_weights()
+# decoder.init_weights()
 #=================
 #setting optimizer
 #=================
@@ -260,6 +262,7 @@ def train(epoch, best_val_loss, ground_truth_G, lambda_A, c_A, optimizer, best_s
 
         #kl loss
         loss_kl = kl_gaussian_sem(logits)
+        # loss_kl  =  kl_gaussian(logits, args.z_dims)
 
         #ELBO loss
         loss = loss_kl + loss_nll

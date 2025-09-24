@@ -108,7 +108,7 @@ class GCNLayer(nn.Module):
         super(GCNLayer, self).__init__()
         self.linear = nn.Linear(in_features, out_features, bias=bias)
 
-    def forward(self, x, adj, W):
+    def forward(self, x, adj, W, Wa):
         """
         x: 節點特徵矩陣 (n_nodes x in_features)
         adj: 鄰接矩陣 (n_nodes x n_nodes)，這裡是學習到的 A
@@ -118,7 +118,7 @@ class GCNLayer(nn.Module):
         # GCN 聚合公式
         # out = torch.matmul(adj, x)   # A * X
         # out = self.linear(out)            # (AX)W
-        out = adj * W @ x
+        out = (adj * W @ x)+Wa
 
         return out
 
@@ -155,13 +155,21 @@ class GCNEncoder(nn.Module):
     def init_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Linear):
-                # He-initialization for ReLU
-                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='leaky_relu', a= 0.01)
-                if m.bias is not None:
-                    nn.init.zeros_(m.bias)
+                nn.init.xavier_normal_(m.weight.data)
             elif isinstance(m, nn.BatchNorm1d):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
+
+    # def init_weights(self):
+    #     for m in self.modules():
+    #         if isinstance(m, nn.Linear):
+    #             # He-initialization for ReLU
+    #             nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='leaky_relu', a= 0.01)
+    #             if m.bias is not None:
+    #                 nn.init.zeros_(m.bias)
+    #         elif isinstance(m, nn.BatchNorm1d):
+    #             m.weight.data.fill_(1)
+    #             m.bias.data.zero_()
 
 #是否有除以0現象
     def normalize_adj(self, adj):
@@ -178,7 +186,7 @@ class GCNEncoder(nn.Module):
         # to amplify the value of A and accelerate convergence.
         adj_A1 = torch.sinh( 3. *self.adj_A)
         adj_A_pos =self.softplus(adj_A1)
-        adj_A_pos1 = self.normalize_adj(adj_A_pos)
+        # adj_A_pos1 = self.normalize_adj(adj_A_pos)
 
         pre_adj_norm = preprocess_adj_new(adj_A_pos) #I-A^T
 
@@ -189,25 +197,25 @@ class GCNEncoder(nn.Module):
         # x = (self.fc2(H1)) #11 * 64  64*64 ->11 * 64 x.shape = 100,11,64
 
         #GCN
-        gcn_x = self.gcn1(x, pre_adj_norm, self.learnable_W)
+        gcn_x = self.gcn1(x, pre_adj_norm, self.learnable_W, self.Wa)
         # print(f'gcn_x={gcn_x.shape}')
-        B, N, H = gcn_x.shape  # 動態抓
-        gcn_x = gcn_x.view(B * N, H)
-        gcn_x = self.batchnorm1(gcn_x)
-        gcn_x = gcn_x.view(B, N, H)
+        # B, N, H = gcn_x.shape  # 動態抓
+        # gcn_x = gcn_x.view(B * N, H)
+        # gcn_x = self.batchnorm1(gcn_x)
+        # gcn_x = gcn_x.view(B, N, H)
         # print("gcn_x.numel() =", gcn_x.numel())
 
         H2 = F.leaky_relu(gcn_x)# fc3 fc4 = 64,64
 
         # GCN
-        gcn_x2 =self.gcn2(self.fc4(H2), pre_adj_norm, self.learnable_W)
+        gcn_x2 =self.gcn2(self.fc4(H2), pre_adj_norm, self.learnable_W, self.Wa)
         #for testing X
-        B, N, H = gcn_x2.shape  # 動態抓
-        gcn_x2 = gcn_x2.view(B * N, H)
-        gcn_x2 = self.batchnorm2(gcn_x2)
-        gcn_x2 = gcn_x2.view(B, N, H)
+        # B, N, H = gcn_x2.shape  # 動態抓
+        # gcn_x2 = gcn_x2.view(B * N, H)
+        # gcn_x2 = self.batchnorm2(gcn_x2)
+        # gcn_x2 = gcn_x2.view(B, N, H)
 
-        logits = gcn_x2+self.Wa
+        logits = gcn_x2
 
         return x, logits, adj_A1, self.z, self.z_positive, self.adj_A, self.Wa, adj_A_pos
 
@@ -237,13 +245,22 @@ class GCNDecoder(nn.Module):
     def init_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Linear):
-                # He-initialization for ReLU
-                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='leaky_relu', a = 0.01)
-                if m.bias is not None:
-                    nn.init.zeros_(m.bias)
+                nn.init.xavier_normal_(m.weight.data)
+                m.bias.data.fill_(0.0)
             elif isinstance(m, nn.BatchNorm1d):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
+
+    # def init_weights(self):
+    #     for m in self.modules():
+    #         if isinstance(m, nn.Linear):
+    #             # He-initialization for ReLU
+    #             nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='leaky_relu', a = 0.01)
+    #             if m.bias is not None:
+    #                 nn.init.zeros_(m.bias)
+    #         elif isinstance(m, nn.BatchNorm1d):
+    #             m.weight.data.fill_(1)
+    #             m.bias.data.zero_()
 
 
     def forward(self,inputs, input_z, n_in_node, adj_norm, Wa):
@@ -260,28 +277,28 @@ class GCNDecoder(nn.Module):
 
         pre_adj_norm = pre_adj_norm.float()
 
-        gcn_x1 = self.gcn1(input_z, pre_adj_norm,self.learnable_W )#100,11,64
+        gcn_x1 = self.gcn1(input_z, pre_adj_norm,self.learnable_W, Wa )#100,11,64
 
-        B, N, H = gcn_x1.shape  # 動態抓
-        gcn_x1 = gcn_x1.view(B * N, H)
-        gcn_x1 = self.batchnorm1(gcn_x1)
-        gcn_x1 = gcn_x1.view(B, N, H)
+        # B, N, H = gcn_x1.shape  # 動態抓
+        # gcn_x1 = gcn_x1.view(B * N, H)
+        # gcn_x1 = self.batchnorm1(gcn_x1)
+        # gcn_x1 = gcn_x1.view(B, N, H)
 
 
         H1 = F.leaky_relu(gcn_x1)
 
-        gcn_x2 = self.gcn2(self.out_fc1(H1),pre_adj_norm,self.learnable_W )#100,11,64
+        gcn_x2 = self.gcn2(self.out_fc1(H1),pre_adj_norm,self.learnable_W, Wa )#100,11,64
 
-        B, N, H = gcn_x2.shape  # 動態抓
-        gcn_x2 = gcn_x2.view(B * N, H)
-        gcn_x2 = self.batchnorm2(gcn_x2)
-        gcn_x2 = gcn_x2.view(B, N, H)
+        # B, N, H = gcn_x2.shape  # 動態抓
+        # gcn_x2 = gcn_x2.view(B * N, H)
+        # gcn_x2 = self.batchnorm2(gcn_x2)
+        # gcn_x2 = gcn_x2.view(B, N, H)
 
 
         H2 = F.leaky_relu(gcn_x2)
         H3 = self.out_fc3(self.out_fc2(H2))
 
-        mat_z = H3+Wa
+        mat_z = H3 #+Wa
 
         H4 = F.leaky_relu(self.out_fc4((mat_z)))
         out = self.out_fc5(H4)
