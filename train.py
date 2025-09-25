@@ -61,7 +61,7 @@ parser.add_argument('--batch_size', type=int, default = 100, # note: should be d
                     help='Number of samples per batch.')
 parser.add_argument('--gamma', type=float, default= 1.0,
                     help='LR decay factor.')
-parser.add_argument('--tau_A', type = float, default=0., #0.01學不到資訊
+parser.add_argument('--tau_A', type = float, default=0.001, #0.01學不到資訊
                     help='coefficient for L-1 norm of A.')
 parser.add_argument('--lambda_A',  type = float, default= 0.,
                     help='coefficient for DAG constraint h(A).')
@@ -383,20 +383,23 @@ try:
                 print(
                     f"[DEBUG] epoch {epoch}, shd_new={shd_new}, best_shd={best_shd}, tpr_new={tpr_new}, best_tpr={best_tpr}")
 
-                if ELBO_loss < best_ELBO_loss:
+                if ELBO_loss <= best_ELBO_loss and  np.count_nonzero(graph)>0:
+                    print(f"[DEBUG] update elbo at epoch {epoch}, graph nnz={graph.sum()}")
                     best_ELBO_loss = ELBO_loss
                     best_epoch = epoch
-                    best_ELBO_graph = graph
+                    best_ELBO_graph = graph.copy()
 
-                if NLL_loss < best_NLL_loss:
+                if NLL_loss <= best_NLL_loss and  np.count_nonzero(graph)>0:
+                    print('update nll')
                     best_NLL_loss = NLL_loss
                     best_epoch = epoch
-                    best_NLL_graph = graph
+                    best_NLL_graph = graph.copy()
 
-                if MSE_loss < best_MSE_loss:
+                if MSE_loss <= best_MSE_loss and  np.count_nonzero(graph)>0:
+                    print('update mse')
                     best_MSE_loss = MSE_loss
                     best_epoch = epoch
-                    best_MSE_graph = graph
+                    best_MSE_graph = graph.copy()
 
                 if shd_new <= best_shd and  np.count_nonzero(graph)>0:
                     best_shd = shd_new
