@@ -222,7 +222,7 @@ def load_data(args, batch_size = 1000, data_type='real_world', debug=False):
 
     # 轉成 torch tensor
     X = torch.FloatTensor(X_scaled)#float32
-    # X = torch.FloatTensor(df.values)
+    X = torch.FloatTensor(df.values)
     feat_train = X
     feat_valid = X
     feat_test =  X
