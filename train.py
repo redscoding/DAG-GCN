@@ -61,7 +61,7 @@ parser.add_argument('--batch_size', type=int, default = 100, # note: should be d
                     help='Number of samples per batch.')
 parser.add_argument('--gamma', type=float, default= 1.0,
                     help='LR decay factor.')
-parser.add_argument('--tau_A', type = float, default=0., #0.01學不到資訊
+parser.add_argument('--tau_A', type = float, default=0.001, #0.01學不到資訊
                     help='coefficient for L-1 norm of A.')
 parser.add_argument('--lambda_A',  type = float, default= 0.,
                     help='coefficient for DAG constraint h(A).')
@@ -141,48 +141,48 @@ adj_A = np.random.randn(num_nodes, num_nodes) * 0.01
 #========================
 #encoder decoder setting
 #========================
-# encoder = GCNEncoder(args.data_variable_size, args.x_dims, args.encoder_hidden,
-#                          int(args.z_dims), adj_A,
-#                          batch_size = args.batch_size,
-#                          do_prob = args.encoder_dropout, factor = args.factor).double()
-#
-# decoder = GCNDecoder(args.data_variable_size * args.x_dims,
-#                      args.z_dims, args.x_dims, encoder,
-#                      data_variable_size=args.data_variable_size,
-#                      batch_size=args.batch_size,
-#                      n_hid=args.decoder_hidden,
-#                      do_prob=args.decoder_dropout).double()
-# #keep X and fc same dtype float32
-# encoder.float()
-# decoder.float()
-# print("Checking encoder parameters:")
-# for name, param in encoder.named_parameters():
-#     print(f"Found parameter: {name}")
-#
-# print("\nChecking if adj_A is in the list:")
-# if "adj_A" in [name for name, _ in encoder.named_parameters()]:
-#     print("adj_A is correctly registered!")
-# else:
-#     print("adj_A is NOT registered as a parameter! This is the core problem.")
-# encoder.init_weights()
-# decoder.init_weights()
-#=================
-#DAG-GNN
-#=================
-encoder = Encoder(args.data_variable_size * args.x_dims, args.x_dims, args.encoder_hidden,
+encoder = GCNEncoder(args.data_variable_size, args.x_dims, args.encoder_hidden,
                          int(args.z_dims), adj_A,
                          batch_size = args.batch_size,
                          do_prob = args.encoder_dropout, factor = args.factor).double()
-decoder = Decoder(args.data_variable_size * args.x_dims,
-                         args.z_dims, args.x_dims, encoder,
-                         data_variable_size = args.data_variable_size,
-                         batch_size = args.batch_size,
-                         n_hid=args.decoder_hidden,
-                         do_prob=args.decoder_dropout).double()
+
+decoder = GCNDecoder(args.data_variable_size * args.x_dims,
+                     args.z_dims, args.x_dims, encoder,
+                     data_variable_size=args.data_variable_size,
+                     batch_size=args.batch_size,
+                     n_hid=args.decoder_hidden,
+                     do_prob=args.decoder_dropout).double()
+#keep X and fc same dtype float32
 encoder.float()
 decoder.float()
+print("Checking encoder parameters:")
+for name, param in encoder.named_parameters():
+    print(f"Found parameter: {name}")
+
+print("\nChecking if adj_A is in the list:")
+if "adj_A" in [name for name, _ in encoder.named_parameters()]:
+    print("adj_A is correctly registered!")
+else:
+    print("adj_A is NOT registered as a parameter! This is the core problem.")
 encoder.init_weights()
 decoder.init_weights()
+#=================
+#DAG-GNN
+ #=================
+# encoder = Encoder(args.data_variable_size * args.x_dims, args.x_dims, args.encoder_hidden,
+#                          int(args.z_dims), adj_A,
+#                          batch_size = args.batch_size,
+#                          do_prob = args.encoder_dropout, factor = args.factor).double()
+# decoder = Decoder(args.data_variable_size * args.x_dims,
+#                          args.z_dims, args.x_dims, encoder,
+#                          data_variable_size = args.data_variable_size,
+#                          batch_size = args.batch_size,
+#                          n_hid=args.decoder_hidden,
+#                          do_prob=args.decoder_dropout).double()
+# encoder.float()
+# decoder.float()
+# encoder.init_weights()
+# decoder.init_weights()
 #=================
 #setting optimizer
 #=================
@@ -243,13 +243,13 @@ def train(epoch, best_val_loss, ground_truth_G, lambda_A, c_A, optimizer, best_s
         optimizer.zero_grad()
         #data.shape = (853,11)
         data = data.unsqueeze(-1)#(100,11,1)
-        # enc_x, logits, origin_A, z_gap, z_positive, myA, Wa, adj_norm = encoder(data)  # logits is of size: [num_sims, z_dims]
-        # edges = logits
-        # dec_x, output= decoder(data, edges, args.data_variable_size * args.x_dims, adj_norm, Wa)
-        enc_x, logits, origin_A, adj_A_tilt_encoder, z_gap, z_positive, myA, Wa = encoder(data)  # logits is of size: [num_sims, z_dims]
+        enc_x, logits, origin_A, z_gap, z_positive, myA, Wa, adj_norm = encoder(data)  # logits is of size: [num_sims, z_dims]
         edges = logits
-
-        dec_x, output, adj_A_tilt_decoder = decoder(data, edges, args.data_variable_size * args.x_dims, origin_A, adj_A_tilt_encoder, Wa)
+        dec_x, output= decoder(data, edges, args.data_variable_size * args.x_dims, adj_norm, Wa)
+        # enc_x, logits, origin_A, adj_A_tilt_encoder, z_gap, z_positive, myA, Wa = encoder(data)  # logits is of size: [num_sims, z_dims]
+        # edges = logits
+        #
+        # dec_x, output, adj_A_tilt_decoder = decoder(data, edges, args.data_variable_size * args.x_dims, origin_A, adj_A_tilt_encoder, Wa)
         if torch.sum(output != output):
             print('nan error in train\n')
 

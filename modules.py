@@ -118,7 +118,8 @@ class GCNLayer(nn.Module):
         # GCN 聚合公式
         # out = torch.matmul(adj, x)   # A * X
         # out = self.linear(out)            # (AX)W
-        out = (adj * W @ x)+Wa
+        out = (adj * W @ x) + Wa
+
 
         return out
 
