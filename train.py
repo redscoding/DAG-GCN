@@ -17,7 +17,7 @@ parser = argparse.ArgumentParser()
 #=====================
 #graph configurations
 #=====================
-parser.add_argument('--data_type', type=str, default= 'real_world',
+parser.add_argument('--data_type', type=str, default= 'synthetic',
                     choices=['synthetic', 'discrete', 'real','real_world'],
                     help='choosing which experiment to do.')
 parser.add_argument('--data_sample_size', type=int, default=5000,

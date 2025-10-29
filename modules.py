@@ -200,10 +200,10 @@ class GCNEncoder(nn.Module):
         #GCN
         gcn_x = self.gcn1(x, pre_adj_norm, self.learnable_W, self.Wa)
         # print(f'gcn_x={gcn_x.shape}')
-        B, N, H = gcn_x.shape  # 動態抓
-        gcn_x = gcn_x.view(B * N, H)
-        gcn_x = self.batchnorm1(gcn_x)
-        gcn_x = gcn_x.view(B, N, H)
+        # B, N, H = gcn_x.shape  # 動態抓
+        # gcn_x = gcn_x.view(B * N, H)
+        # gcn_x = self.batchnorm1(gcn_x)
+        # gcn_x = gcn_x.view(B, N, H)
         # print("gcn_x.numel() =", gcn_x.numel())
 
         H2 = F.leaky_relu(gcn_x)# fc3 fc4 = 64,64
@@ -211,10 +211,10 @@ class GCNEncoder(nn.Module):
         # GCN
         gcn_x2 =self.gcn2(self.fc4(H2), pre_adj_norm, self.learnable_W, self.Wa)
         #for testing X
-        B, N, H = gcn_x2.shape  # 動態抓
-        gcn_x2 = gcn_x2.view(B * N, H)
-        gcn_x2 = self.batchnorm2(gcn_x2)
-        gcn_x2 = gcn_x2.view(B, N, H)
+        # B, N, H = gcn_x2.shape  # 動態抓
+        # gcn_x2 = gcn_x2.view(B * N, H)
+        # gcn_x2 = self.batchnorm2(gcn_x2)
+        # gcn_x2 = gcn_x2.view(B, N, H)
 
         logits = gcn_x2
 
@@ -280,20 +280,20 @@ class GCNDecoder(nn.Module):
 
         gcn_x1 = self.gcn1(input_z, pre_adj_norm,self.learnable_W, Wa )#100,11,64
 
-        B, N, H = gcn_x1.shape  # 動態抓
-        gcn_x1 = gcn_x1.view(B * N, H)
-        gcn_x1 = self.batchnorm1(gcn_x1)
-        gcn_x1 = gcn_x1.view(B, N, H)
+        # B, N, H = gcn_x1.shape  # 動態抓
+        # gcn_x1 = gcn_x1.view(B * N, H)
+        # gcn_x1 = self.batchnorm1(gcn_x1)
+        # gcn_x1 = gcn_x1.view(B, N, H)
 
 
         H1 = F.leaky_relu(gcn_x1)
 
         gcn_x2 = self.gcn2(self.out_fc1(H1),pre_adj_norm,self.learnable_W, Wa )#100,11,64
 
-        B, N, H = gcn_x2.shape  # 動態抓
-        gcn_x2 = gcn_x2.view(B * N, H)
-        gcn_x2 = self.batchnorm2(gcn_x2)
-        gcn_x2 = gcn_x2.view(B, N, H)
+        # B, N, H = gcn_x2.shape  # 動態抓
+        # gcn_x2 = gcn_x2.view(B * N, H)
+        # gcn_x2 = self.batchnorm2(gcn_x2)
+        # gcn_x2 = gcn_x2.view(B, N, H)
 
 
         H2 = F.leaky_relu(gcn_x2)
