@@ -12,12 +12,13 @@ from networkx import reconstruct_path
 from torch.optim import lr_scheduler
 from utils import *
 from modules import *
+from results import save_diagnostic_plot
 
 parser = argparse.ArgumentParser()
 #=====================
 #graph configurations
 #=====================
-parser.add_argument('--data_type', type=str, default= 'synthetic',
+parser.add_argument('--data_type', type=str, default= 'real_world',
                     choices=['synthetic', 'discrete', 'real','real_world'],
                     help='choosing which experiment to do.')
 parser.add_argument('--data_sample_size', type=int, default=5000,
@@ -61,7 +62,7 @@ parser.add_argument('--batch_size', type=int, default = 100, # note: should be d
                     help='Number of samples per batch.')
 parser.add_argument('--gamma', type=float, default= 1.0,
                     help='LR decay factor.')
-parser.add_argument('--tau_A', type = float, default=0.001, #0.01學不到資訊
+parser.add_argument('--tau_A', type = float, default=0.0, #0.01學不到資訊
                     help='coefficient for L-1 norm of A.')
 parser.add_argument('--lambda_A',  type = float, default= 0.,
                     help='coefficient for DAG constraint h(A).')
@@ -232,6 +233,15 @@ def train(epoch, best_val_loss, ground_truth_G, lambda_A, c_A, optimizer, best_s
     shd_trian = []
     tpr_train = []
 
+    #紀錄矩陣消失問題
+    epoch_loss_recon = 0.0
+    epoch_loss_dag_h_A = 0.0
+    epoch_loss_sparse_total = 0.0
+    epoch_A_magnitude = 0.0
+    epoch_A_grad_magnitude = 0.0
+
+    num_batches = len(train_loader)
+
 
     encoder.train()
     decoder.train()
@@ -260,6 +270,15 @@ def train(epoch, best_val_loss, ground_truth_G, lambda_A, c_A, optimizer, best_s
         #reconstruction accuracy loss
         loss_nll = nll_gaussian(preds, target, variance)
 
+        #1029修改稀疏損失
+        sparse_loss_l1 = args.tau_A * torch.sum(torch.abs(origin_A))
+        sparse_loss_l2_trace = 0.001 * torch.trace(origin_A * origin_A)
+        loss_sparse_total = sparse_loss_l1 + sparse_loss_l2_trace
+
+        #單純紀錄DAG loss h(A)
+        h_A = _h_A(origin_A, args.data_variable_size)
+        loss_dag_augmented = lambda_A * h_A + 0.5 * c_A * h_A * h_A
+
         #kl loss
         loss_kl = kl_gaussian_sem(logits)
         # loss_kl  =  kl_gaussian(logits, args.z_dims)
@@ -271,11 +290,27 @@ def train(epoch, best_val_loss, ground_truth_G, lambda_A, c_A, optimizer, best_s
         one_adj_A = origin_A  # torch.mean(adj_A_tilt_decoder, dim =0)
         sparse_loss = args.tau_A * torch.sum(torch.abs(one_adj_A))
 
-        #compute h(A)
-        h_A = _h_A(origin_A, args.data_variable_size)
-        loss += lambda_A * h_A + 0.5 * c_A * h_A * h_A + 0.001 * torch.trace(
-            origin_A * origin_A) + sparse_loss  # +  0.01 * torch.sum(variance * variance)
+        loss = loss_kl + loss_nll + loss_dag_augmented + loss_sparse_total
+
         loss.backward()
+
+        #1029修改 監控日誌 鄰接矩陣與梯度issues
+        #累加A的大小
+        epoch_A_magnitude += torch.mean(torch.abs(origin_A.data)).item()
+        #累加A的梯度大小
+        if origin_A.grad is not None:
+                epoch_A_grad_magnitude += torch.mean(torch.abs(origin_A.grad.data)).item()
+
+        #累加L_Recon
+        epoch_loss_recon += loss_nll.item()
+
+        #累加 h_A (DAG損失原始值)
+        epoch_loss_dag_h_A += h_A.item()
+
+        #累加L_sparse (L1+ L2-trace)
+        epoch_loss_sparse_total += loss_sparse_total.item()
+
+        #日誌結束
 
         # 這裡會檢查所有參數的梯度
         all_params = list(encoder.named_parameters()) + list(decoder.named_parameters())
@@ -345,7 +380,16 @@ def train(epoch, best_val_loss, ground_truth_G, lambda_A, c_A, optimizer, best_s
     if 'graph' not in vars():
         print('error on assign')
 
-    return np.mean(np.mean(kl_train) + np.mean(nll_train)), np.mean(nll_train), np.mean(mse_train), graph, origin_A, shd, tpr#, best_SHD_graph, best_tpr_graph
+
+
+    #計算監控指標
+    avg_A_mag = epoch_A_magnitude / num_batches
+    avg_A_grad_mag = epoch_A_grad_magnitude / num_batches
+    avg_loss_recon = epoch_loss_recon / num_batches
+    avg_loss_dag_h_A = epoch_loss_dag_h_A / num_batches
+    avg_loss_sparse = epoch_loss_sparse_total / num_batches
+
+    return avg_A_mag, avg_A_grad_mag, avg_loss_recon, avg_loss_dag_h_A, avg_loss_sparse, np.mean(np.mean(kl_train) + np.mean(nll_train)), np.mean(nll_train), np.mean(mse_train), graph, origin_A, shd, tpr#, best_SHD_graph, best_tpr_graph
 
 ###########################
 # main
@@ -362,6 +406,13 @@ best_NLL_graph = []
 best_MSE_graph = []
 best_SHD_graph = []
 best_tpr_graph = []
+#日誌紀錄
+log_epoch = []
+log_A_magnitude = []
+log_A_grad_magnitude = []
+log_loss_recon = []
+log_loss_dag_h_A = []
+log_loss_sparse = []
 # optimizer step on hyparameters
 c_A = args.c_A
 lambda_A = args.lambda_A
@@ -375,11 +426,15 @@ try:
         while c_A < 1e+20:
             for epoch in range(args.epochs):
                 #  return np.mean(np.mean(kl_train) + np.mean(nll_train)), np.mean(nll_train), np.mean(mse_train), graph, origin_A, shd, tpr
-                ELBO_loss, NLL_loss, MSE_loss, graph, origin_A, shd_new, tpr_new= train(epoch, best_ELBO_loss, ground_truth_G, lambda_A, c_A, optimizer,best_shd, best_tpr, best_SHD_graph, best_tpr_graph)
-                # best_shd = best_shd_new
-                # best_tpr = best_tpr_new
-                # best_shd_graph = shd_G
-                # best_tpr_graph = tpr_G
+                avg_A_mag, avg_A_grad_mag, avg_loss_recon, avg_loss_dag_h_A, avg_loss_sparse, ELBO_loss, NLL_loss, MSE_loss, graph, origin_A, shd_new, tpr_new= train(epoch, best_ELBO_loss, ground_truth_G, lambda_A, c_A, optimizer,best_shd, best_tpr, best_SHD_graph, best_tpr_graph)
+
+                log_epoch.append(epoch)
+                log_A_magnitude.append(avg_A_mag)
+                log_A_grad_magnitude.append(avg_A_grad_mag)
+                log_loss_recon.append(avg_loss_recon)
+                log_loss_dag_h_A.append(avg_loss_dag_h_A)
+                log_loss_sparse.append(avg_loss_sparse)
+
                 print(
                     f"[DEBUG] epoch {epoch}, shd_new={shd_new}, best_shd={best_shd}, tpr_new={tpr_new}, best_tpr={best_tpr}")
 
@@ -434,6 +489,16 @@ try:
 
         if h_A_new.item() <= h_tol:
             break
+
+    save_diagnostic_plot(
+        log_epoch,
+        log_A_magnitude,
+        log_A_grad_magnitude,
+        log_loss_recon,
+        log_loss_dag_h_A,
+        log_loss_sparse,
+        filename=f"experiment_baseline_plot.png"  # 你可以自訂檔案名稱
+    )
 
 
     if args.save_folder:
