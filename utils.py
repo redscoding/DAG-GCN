@@ -237,7 +237,7 @@ def load_data(args, batch_size = 1000, data_type='real_world', debug=False):
     valid_loader = DataLoader(valid_data, batch_size=batch_size)
     test_loader = DataLoader(test_data, batch_size=batch_size)
 
-    return train_loader, valid_loader, test_loader, G#, scaler
+    return train_data, train_loader, valid_loader, test_loader, G#, scaler
 
 
 

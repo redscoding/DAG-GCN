@@ -130,7 +130,7 @@ def stau(w, tau):
 #=========
 #get data
 #=========
-train_loader, valid_loader, test_loader, ground_truth_G = load_data( args, args.batch_size, args.suffix)
+_, train_loader, valid_loader, test_loader, ground_truth_G = load_data( args, args.batch_size, args.suffix)
 
 #==========
 #adj 可給ground truth adj
@@ -225,7 +225,7 @@ def update_optimizer(optimizer, original_lr, c_A):
 # 設定梯度裁剪的最大範數值
 # max_grad_norm = 1.0
 
-def train(epoch, best_val_loss, ground_truth_G, lambda_A, c_A, optimizer, best_shd, best_tpr, best_tpr_graph, best_SHD_graph):
+def train(epoch, best_val_loss, ground_truth_G, lambda_A, c_A, optimizer, train_loader):
     t = time.time()
     nll_train = []
     kl_train = []
@@ -394,18 +394,11 @@ def train(epoch, best_val_loss, ground_truth_G, lambda_A, c_A, optimizer, best_s
 ###########################
 # main
 ###########################
+
+train_data,_,_,_,_ = load_data( args, args.batch_size, args.suffix)
+
 t_total = time.time()
-best_ELBO_loss = np.inf
-best_NLL_loss = np.inf
-best_MSE_loss = np.inf
-best_shd = np.inf
-best_tpr = -1
-best_epoch = 0
-best_ELBO_graph = []
-best_NLL_graph = []
-best_MSE_graph = []
-best_SHD_graph = []
-best_tpr_graph = []
+
 #日誌紀錄
 log_epoch = []
 log_A_magnitude = []
@@ -421,84 +414,159 @@ h_tol = args.h_tol
 k_max_iter = int(args.k_max_iter)
 h_A_old = np.inf
 
+#bootstrap settings
+k_boot_iter = 3
+all_result_graph = []
+
 try:
-    for step_k in range(k_max_iter):
-        while c_A < 1e+20:
-            for epoch in range(args.epochs):
-                #  return np.mean(np.mean(kl_train) + np.mean(nll_train)), np.mean(nll_train), np.mean(mse_train), graph, origin_A, shd, tpr
-                avg_A_mag, avg_A_grad_mag, avg_loss_recon, avg_loss_dag_h_A, avg_loss_sparse, ELBO_loss, NLL_loss, MSE_loss, graph, origin_A, shd_new, tpr_new= train(epoch, best_ELBO_loss, ground_truth_G, lambda_A, c_A, optimizer,best_shd, best_tpr, best_SHD_graph, best_tpr_graph)
+    for b in range(k_boot_iter):
+        print(f"--- [Bootstrap Iteration {b+1} / {k_boot_iter}] ---")
 
-                log_epoch.append(epoch)
-                log_A_magnitude.append(avg_A_mag)
-                log_A_grad_magnitude.append(avg_A_grad_mag)
-                log_loss_recon.append(avg_loss_recon)
-                log_loss_dag_h_A.append(avg_loss_dag_h_A)
-                log_loss_sparse.append(avg_loss_sparse)
+        N_total = len(train_data)
+        # print(f"N = {N_total}") 853
+        #重抽樣 從n個索引抽出一個
+        boot_indices = torch.randint(0,N_total,(N_total,))
 
-                print(
-                    f"[DEBUG] epoch {epoch}, shd_new={shd_new}, best_shd={best_shd}, tpr_new={tpr_new}, best_tpr={best_tpr}")
+        #根據索引重建新的資料集
+        boot_data = train_data[boot_indices]
+        # print(f"boot_data = {boot_data}")
 
-                if ELBO_loss <= best_ELBO_loss :
-                    print(f"[DEBUG] update elbo at epoch {epoch}, graph nnz={graph.sum()}")
-                    best_ELBO_loss = ELBO_loss
-                    best_epoch = epoch
-                    if np.count_nonzero(graph)>0:
-                        best_ELBO_graph = graph.copy()
+        #建立新的dataset & dataloader
+        boot_dataset = torch.utils.data.TensorDataset(*boot_data)
+        train_loader = torch.utils.data.DataLoader(
+            boot_dataset,
+            batch_size = args.batch_size,
+            shuffle = True
+        )
+        encoder = GCNEncoder(args.data_variable_size, args.x_dims, args.encoder_hidden,
+                             int(args.z_dims), adj_A,
+                             batch_size=args.batch_size,
+                             do_prob=args.encoder_dropout, factor=args.factor).double()
 
-                if NLL_loss <= best_NLL_loss :
-                    print('update nll')
-                    best_NLL_loss = NLL_loss
-                    best_epoch = epoch
-                    if np.count_nonzero(graph)>0:
-                        best_NLL_graph = graph.copy()
-                if MSE_loss <= best_MSE_loss:
-                    print('update mse')
-                    best_MSE_loss = MSE_loss
-                    best_epoch = epoch
-                    if np.count_nonzero(graph)>0:
-                        best_MSE_graph = graph.copy()
+        decoder = GCNDecoder(args.data_variable_size * args.x_dims,
+                             args.z_dims, args.x_dims, encoder,
+                             data_variable_size=args.data_variable_size,
+                             batch_size=args.batch_size,
+                             n_hid=args.decoder_hidden,
+                             do_prob=args.decoder_dropout).double()
+        # keep X and fc same dtype float32
+        encoder.float()
+        decoder.float()
+        encoder.init_weights()
+        decoder.init_weights()
+        optimizer = optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=args.lr)
 
-                if shd_new <= best_shd:
-                    best_shd = shd_new
-                    if np.count_nonzero(graph)>0:
-                        best_SHD_graph = graph.copy()
+        best_ELBO_loss = np.inf
+        best_NLL_loss = np.inf
+        best_MSE_loss = np.inf
+        best_shd = np.inf
+        best_tpr = -1
+        best_epoch = 0
+        best_ELBO_graph = None
+        best_NLL_graph = None
+        best_MSE_graph = None
+        best_SHD_graph = None
+        best_tpr_graph = None
 
-                if (tpr_new >= best_tpr) and (shd_new <= 36):
-                    best_tpr = tpr_new
-                    if np.count_nonzero(graph)>0:
+        for step_k in range(k_max_iter):
+            while c_A < 1e+20:
+                for epoch in range(args.epochs):
+                    #  return np.mean(np.mean(kl_train) + np.mean(nll_train)), np.mean(nll_train), np.mean(mse_train), graph, origin_A, shd, tpr
+                    avg_A_mag, avg_A_grad_mag, avg_loss_recon, avg_loss_dag_h_A, avg_loss_sparse, ELBO_loss, NLL_loss, MSE_loss, graph, origin_A, shd_new, tpr_new= train(epoch, best_ELBO_loss, ground_truth_G, lambda_A, c_A, optimizer, train_loader = train_loader)
+
+                    log_epoch.append(epoch)
+                    log_A_magnitude.append(avg_A_mag)
+                    log_A_grad_magnitude.append(avg_A_grad_mag)
+                    log_loss_recon.append(avg_loss_recon)
+                    log_loss_dag_h_A.append(avg_loss_dag_h_A)
+                    log_loss_sparse.append(avg_loss_sparse)
+
+                    print(
+                        f"[DEBUG] epoch {epoch}, shd_new={shd_new}, best_shd={best_shd}, tpr_new={tpr_new}, best_tpr={best_tpr}")
+
+                    if ELBO_loss <= best_ELBO_loss :
+                        print(f"[DEBUG] update elbo at epoch {epoch}, graph nnz={graph.sum()}")
+                        best_ELBO_loss = ELBO_loss
+                        best_epoch = epoch
+                        if np.count_nonzero(graph)>0:
+                            best_ELBO_graph = graph.copy()
+
+                    if NLL_loss <= best_NLL_loss :
+                        print('update nll')
+                        best_NLL_loss = NLL_loss
+                        best_epoch = epoch
+                        if np.count_nonzero(graph)>0:
+                            best_NLL_graph = graph.copy()
+                    if MSE_loss <= best_MSE_loss:
+                        print('update mse')
+                        best_MSE_loss = MSE_loss
+                        best_epoch = epoch
+                        if np.count_nonzero(graph)>0:
+                            best_MSE_graph = graph.copy()
+
+                    if shd_new <= best_shd:
+                        best_shd = shd_new
+                        if np.count_nonzero(graph)>0:
+                            best_SHD_graph = graph.copy()
+
+                    if (tpr_new >= best_tpr) and (shd_new <= 36):
+                        best_tpr = tpr_new
                         best_tpr_graph = graph.copy()
 
 
-            print("Optimization Finished!")
-            print("Best Epoch: {:04d}".format(best_epoch))
-            if ELBO_loss > 2 * best_ELBO_loss:
+                print("Optimization Finished!")
+                print("Best Epoch: {:04d}".format(best_epoch))
+                if ELBO_loss > 2 * best_ELBO_loss:
+                    break
+
+                # update parameters
+                A_new = origin_A.data.clone()
+                h_A_new = _h_A(A_new, args.data_variable_size)
+                if h_A_new.item() > 0.25 * h_A_old:
+                    c_A*=10
+                else:
+                    break
+
+                # update parameters
+                # h_A, adj_A are computed in loss anyway, so no need to store
+            h_A_old = h_A_new.item()
+            lambda_A += c_A * h_A_new.item()
+
+            if h_A_new.item() <= h_tol:
                 break
 
-            # update parameters
-            A_new = origin_A.data.clone()
-            h_A_new = _h_A(A_new, args.data_variable_size)
-            if h_A_new.item() > 0.25 * h_A_old:
-                c_A*=10
-            else:
-                break
+        if best_SHD_graph is not None:
+                all_result_graph.append(best_SHD_graph.copy())
 
-            # update parameters
-            # h_A, adj_A are computed in loss anyway, so no need to store
-        h_A_old = h_A_new.item()
-        lambda_A += c_A * h_A_new.item()
+    valid_graphs = [graph for graph in all_result_graph if graph is not None]
 
-        if h_A_new.item() <= h_tol:
-            break
+    if not valid_graphs:
+        print("警告：所有的 bootstrap 運行都失敗了。")
+        num_nodes = 11  # <--- 請確認
+        edge_frequency_matrix = np.zeros((num_nodes, num_nodes))
+    else:
+        # 3. 只對成功的結果取平均
+        success_rate = len(valid_graphs) / len(all_result_graph)
+        print(f"Bootstrap 成功率: {success_rate * 100:.2f}% ({len(valid_graphs)} / {len(all_result_graph)})")
 
-    save_diagnostic_plot(
-        log_epoch,
-        log_A_magnitude,
-        log_A_grad_magnitude,
-        log_loss_recon,
-        log_loss_dag_h_A,
-        log_loss_sparse,
-        filename=f"experiment_baseline_plot.png"  # 你可以自訂檔案名稱
-    )
+        # 這裡 valid_graphs 是一個只包含 numpy 陣列的串列，可以安全地取平均
+        edge_frequency_matrix = np.mean(valid_graphs, axis=0)
+
+        final_aggregated_graph = edge_frequency_matrix.copy()
+
+        threshold = 0.5
+        final_aggregated_graph[final_aggregated_graph >= threshold] = 1
+        final_aggregated_graph[final_aggregated_graph < threshold] = 0
+
+        print("\n--- [Bootstrap 聚合圖 (Threshold=0.5) 最終結果] ---")
+        print(final_aggregated_graph)
+        print("Ground Truth:")
+        print(nx.to_numpy_array(ground_truth_G))
+
+        fdr, tpr, fpr, shd, nnz = count_accuracy(ground_truth_G, nx.DiGraph(final_aggregated_graph))
+        print('Bootstrap Aggregated Graph Accuracy:')
+        print(f'SHD: {shd}, TPR: {tpr}, FDR: {fdr}, FPR: {fpr}, NNZ: {nnz}')
+        print("--------------------------------------------------\n")
 
 
     if args.save_folder:
@@ -506,47 +574,47 @@ try:
         log.flush()
 
     # test()
-    print (best_ELBO_graph)
-    print(nx.to_numpy_array(ground_truth_G))
-    fdr, tpr, fpr, shd, nnz = count_accuracy(ground_truth_G, nx.DiGraph(best_ELBO_graph))
-    print('Best ELBO Graph Accuracy: fdr', fdr, ' tpr ', tpr, ' fpr ', fpr, 'shd', shd, 'nnz', nnz)
-
-    print(best_NLL_graph)
-    print(nx.to_numpy_array(ground_truth_G))
-    fdr, tpr, fpr, shd, nnz = count_accuracy(ground_truth_G, nx.DiGraph(best_NLL_graph))
-    print('Best NLL Graph Accuracy: fdr', fdr, ' tpr ', tpr, ' fpr ', fpr, 'shd', shd, 'nnz', nnz)
-
-
-    print (best_MSE_graph)
-    print(nx.to_numpy_array(ground_truth_G))
-    fdr, tpr, fpr, shd, nnz = count_accuracy(ground_truth_G, nx.DiGraph(best_MSE_graph))
-    print('Best MSE Graph Accuracy: fdr', fdr, ' tpr ', tpr, ' fpr ', fpr, 'shd', shd, 'nnz', nnz)
-
-    print(best_SHD_graph)
-    print(nx.to_numpy_array(ground_truth_G))
-    fdr, tpr, fpr, shd, nnz = count_accuracy(ground_truth_G, nx.DiGraph(best_SHD_graph))
-    print('Best SHD Graph Accuracy: fdr', fdr, ' tpr ', tpr, ' fpr ', fpr, 'shd', shd, 'nnz', nnz)
-
-    print(best_tpr_graph)
-    print(nx.to_numpy_array(ground_truth_G))
-    fdr, tpr, fpr, shd, nnz = count_accuracy(ground_truth_G, nx.DiGraph(best_tpr_graph))
-    print('Best tpr Graph Accuracy: fdr', fdr, ' tpr ', tpr, ' fpr ', fpr, 'shd', shd, 'nnz', nnz)
-
-    graph = origin_A.data.clone().numpy()
-    graph[np.abs(graph) < 0.1] = 0
-    # print(graph)
-    fdr, tpr, fpr, shd, nnz = count_accuracy(ground_truth_G, nx.DiGraph(graph))
-    print('threshold 0.1, Accuracy: fdr', fdr, ' tpr ', tpr, ' fpr ', fpr, 'shd', shd, 'nnz', nnz)
-
-    graph[np.abs(graph) < 0.2] = 0
-    # print(graph)
-    fdr, tpr, fpr, shd, nnz = count_accuracy(ground_truth_G, nx.DiGraph(graph))
-    print('threshold 0.2, Accuracy: fdr', fdr, ' tpr ', tpr, ' fpr ', fpr, 'shd', shd, 'nnz', nnz)
-
-    graph[np.abs(graph) < 0.3] = 0
-    # print(graph)
-    fdr, tpr, fpr, shd, nnz = count_accuracy(ground_truth_G, nx.DiGraph(graph))
-    print('threshold 0.3, Accuracy: fdr', fdr, ' tpr ', tpr, ' fpr ', fpr, 'shd', shd, 'nnz', nnz)
+    # print (best_ELBO_graph)
+    # print(nx.to_numpy_array(ground_truth_G))
+    # fdr, tpr, fpr, shd, nnz = count_accuracy(ground_truth_G, nx.DiGraph(best_ELBO_graph))
+    # print('Best ELBO Graph Accuracy: fdr', fdr, ' tpr ', tpr, ' fpr ', fpr, 'shd', shd, 'nnz', nnz)
+    #
+    # print(best_NLL_graph)
+    # print(nx.to_numpy_array(ground_truth_G))
+    # fdr, tpr, fpr, shd, nnz = count_accuracy(ground_truth_G, nx.DiGraph(best_NLL_graph))
+    # print('Best NLL Graph Accuracy: fdr', fdr, ' tpr ', tpr, ' fpr ', fpr, 'shd', shd, 'nnz', nnz)
+    #
+    #
+    # print (best_MSE_graph)
+    # print(nx.to_numpy_array(ground_truth_G))
+    # fdr, tpr, fpr, shd, nnz = count_accuracy(ground_truth_G, nx.DiGraph(best_MSE_graph))
+    # print('Best MSE Graph Accuracy: fdr', fdr, ' tpr ', tpr, ' fpr ', fpr, 'shd', shd, 'nnz', nnz)
+    #
+    # print(best_SHD_graph)
+    # print(nx.to_numpy_array(ground_truth_G))
+    # fdr, tpr, fpr, shd, nnz = count_accuracy(ground_truth_G, nx.DiGraph(best_SHD_graph))
+    # print('Best SHD Graph Accuracy: fdr', fdr, ' tpr ', tpr, ' fpr ', fpr, 'shd', shd, 'nnz', nnz)
+    #
+    # print(best_tpr_graph)
+    # print(nx.to_numpy_array(ground_truth_G))
+    # fdr, tpr, fpr, shd, nnz = count_accuracy(ground_truth_G, nx.DiGraph(best_tpr_graph))
+    # print('Best tpr Graph Accuracy: fdr', fdr, ' tpr ', tpr, ' fpr ', fpr, 'shd', shd, 'nnz', nnz)
+    #
+    # graph = origin_A.data.clone().numpy()
+    # graph[np.abs(graph) < 0.1] = 0
+    # # print(graph)
+    # fdr, tpr, fpr, shd, nnz = count_accuracy(ground_truth_G, nx.DiGraph(graph))
+    # print('threshold 0.1, Accuracy: fdr', fdr, ' tpr ', tpr, ' fpr ', fpr, 'shd', shd, 'nnz', nnz)
+    #
+    # graph[np.abs(graph) < 0.2] = 0
+    # # print(graph)
+    # fdr, tpr, fpr, shd, nnz = count_accuracy(ground_truth_G, nx.DiGraph(graph))
+    # print('threshold 0.2, Accuracy: fdr', fdr, ' tpr ', tpr, ' fpr ', fpr, 'shd', shd, 'nnz', nnz)
+    #
+    # graph[np.abs(graph) < 0.3] = 0
+    # # print(graph)
+    # fdr, tpr, fpr, shd, nnz = count_accuracy(ground_truth_G, nx.DiGraph(graph))
+    # print('threshold 0.3, Accuracy: fdr', fdr, ' tpr ', tpr, ' fpr ', fpr, 'shd', shd, 'nnz', nnz)
 
 
 except KeyboardInterrupt:
